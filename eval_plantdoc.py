@@ -1,6 +1,7 @@
 import os
 import torch
 import pandas as pd
+from PIL import ImageOps
 from torchvision import transforms, datasets
 from torch.utils.data import DataLoader
 from src.model import initialize_model
@@ -47,20 +48,22 @@ def evaluate_cross_dataset():
     }
 
     # 3. As 38 Classes do PlantVillage (Ordem exata que o modelo aprendeu)
+    # 3. As 28 Classes do PlantVillage (Ordem exata que o novo modelo aprendeu)
     pv_classes = [
-        "Apple___Apple_scab", "Apple___Black_rot", "Apple___Cedar_apple_rust", "Apple___healthy",
-        "Blueberry___healthy", "Cherry_(including_sour)___Powdery_mildew", "Cherry_(including_sour)___healthy",
+        "Apple___Apple_scab", "Apple___Cedar_apple_rust", "Apple___healthy",
+        "Blueberry___healthy", "Cherry_(including_sour)___healthy",
         "Corn_(maize)___Cercospora_leaf_spot Gray_leaf_spot", "Corn_(maize)___Common_rust_", 
-        "Corn_(maize)___Northern_Leaf_Blight", "Corn_(maize)___healthy", "Grape___Black_rot", 
-        "Grape___Esca_(Black_Measles)", "Grape___Leaf_blight_(Isariopsis_Leaf_Spot)", "Grape___healthy", 
-        "Orange___Haunglongbing_(Citrus_greening)", "Peach___Bacterial_spot", "Peach___healthy", 
-        "Pepper,_bell___Bacterial_spot", "Pepper,_bell___healthy", "Potato___Early_blight", 
-        "Potato___Late_blight", "Potato___healthy", "Raspberry___healthy", "Soybean___healthy", 
-        "Squash___Powdery_mildew", "Strawberry___Leaf_scorch", "Strawberry___healthy", 
-        "Tomato___Bacterial_spot", "Tomato___Early_blight", "Tomato___Late_blight", "Tomato___Leaf_Mold", 
-        "Tomato___Septoria_leaf_spot", "Tomato___Spider_mites Two-spotted_spider_mite", "Tomato___Target_Spot", 
+        "Corn_(maize)___Northern_Leaf_Blight", "Grape___Black_rot", "Grape___healthy", 
+        "Peach___healthy", "Pepper,_bell___Bacterial_spot", "Pepper,_bell___healthy", 
+        "Potato___Early_blight", "Potato___Late_blight", "Potato___healthy", 
+        "Raspberry___healthy", "Soybean___healthy", "Squash___Powdery_mildew", 
+        "Strawberry___healthy", "Tomato___Bacterial_spot", "Tomato___Early_blight", 
+        "Tomato___Late_blight", "Tomato___Leaf_Mold", "Tomato___Septoria_leaf_spot", 
         "Tomato___Tomato_Yellow_Leaf_Curl_Virus", "Tomato___Tomato_mosaic_virus", "Tomato___healthy"
     ]
+    
+    # IMPORTANTE: Se o seu initialize_model precisar de num_classes explícito, ajuste abaixo:
+    # model_ft, input_size = initialize_model(feature_extract=False, use_pretrained=True, num_classes=28)
 
     # 4. Inicializar e carregar os pesos do modelo (modo fine_tuning)
     # Passamos feature_extract=False e use_pretrained=True pois essa foi a arquitetura do fine_tuning
@@ -72,11 +75,13 @@ def evaluate_cross_dataset():
     # 5. Carregar o dataset do PlantDoc
     # Na avaliação, não fazemos Data Augmentation (sem RandomCrop ou Flip), apenas CenterCrop
     transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.CenterCrop(input_size),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
+            transforms.Resize((256, 256)),
+            # Aplica a equalização de histograma na imagem PIL antes de fazer os cortes e virar tensor
+            transforms.Lambda(lambda img: ImageOps.equalize(img)),
+            transforms.CenterCrop(input_size),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
     
     plantdoc_dataset = datasets.ImageFolder(root=plantdoc_dir, transform=transform)
     dataloader = DataLoader(plantdoc_dataset, batch_size=32, shuffle=False, num_workers=4)

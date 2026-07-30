@@ -8,7 +8,7 @@ def set_parameter_requires_grad(model, feature_extracting):
         for param in model.parameters():
             param.requires_grad = False
 
-def initialize_model(feature_extract, use_pretrained, num_classes=38):
+def initialize_model(feature_extract, use_pretrained, num_classes=28):
     model_ft = None
     input_size = 224 # Tamanho esperado pelas camadas do GoogLeNet no PyTorch
 
