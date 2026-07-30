@@ -1,15 +1,12 @@
 import os
 import json
 import torch
+import random
 import numpy as np
 from PIL import ImageOps
 from torch.utils.data import Subset, DataLoader
 from torchvision import transforms, datasets
 from sklearn.model_selection import GroupShuffleSplit
-
-import torch
-import random
-from torchvision import transforms
 
 class RandomBackgroundInject(object):
     """
@@ -22,7 +19,6 @@ class RandomBackgroundInject(object):
     def __call__(self, tensor_img):
         if random.random() < self.p:
             # Encontra onde é fundo (considerando fundo preto = soma dos canais próxima de 0)
-            # Como a imagem já é um tensor [C, H, W] variando de 0 a 1
             mask = tensor_img.sum(dim=0) < 0.1 
             
             # Cria um fundo de ruído aleatório
@@ -33,7 +29,7 @@ class RandomBackgroundInject(object):
             
         return tensor_img
 
-# ================= NOVA SEÇÃO: FILTRO DE CLASSES =================
+# ================= SEÇÃO: FILTRO DE CLASSES =================
 VALID_CLASSES = sorted([
     "Apple___Apple_scab", "Apple___Cedar_apple_rust", "Apple___healthy",
     "Blueberry___healthy", "Cherry_(including_sour)___healthy",
@@ -55,9 +51,57 @@ class FilteredImageFolder(datasets.ImageFolder):
         classes = [c for c in classes if c in VALID_CLASSES]
         class_to_idx = {c: i for i, c in enumerate(classes)}
         return classes, class_to_idx
-# =================================================================
+# ============================================================
 
-def load_data(data_dir, input_size, batch_size=24):
+def get_transforms(input_size, aug_geom=False, aug_color=False, aug_occlus=False):
+    """
+    Constrói o pipeline de transformações dinamicamente com base 
+    nos parâmetros passados pelo estudo de ablação.
+    """
+    # 1. Transformações Base (Sempre aplicadas)
+    transform_list = [transforms.Resize((256, 256))]
+    
+    # 2. Transformações Geométricas
+    if aug_geom:
+        transform_list.extend([
+            transforms.RandomRotation(degrees=45),
+            transforms.RandomPerspective(distortion_scale=0.3, p=0.5),
+            transforms.RandomHorizontalFlip(),
+            transforms.RandomVerticalFlip()
+        ])
+        
+    # 3. Transformações de Cor
+    if aug_color:
+        transform_list.extend([
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
+            transforms.RandomChoice([
+                transforms.GaussianBlur(kernel_size=(5, 9)),
+                transforms.Lambda(lambda img: ImageOps.equalize(img))
+            ])
+        ])
+        
+    # 4. Corte e Conversão (Sempre aplicados depois das distorções de PIL)
+    transform_list.extend([
+        transforms.RandomCrop(input_size),
+        transforms.ToTensor()
+    ])
+    
+    # 5. Oclusão e Ruído (Sempre aplicados depois do ToTensor, pois exigem Tensores)
+    if aug_occlus:
+        # Coloquei o seu injetor de fundo na chave de oclusão, pois ele suja a imagem
+        transform_list.append(RandomBackgroundInject(p=0.7))
+        transform_list.append(transforms.RandomErasing(p=0.5, scale=(0.02, 0.1)))
+        
+    # 6. Normalização Final (Sempre aplicada)
+    transform_list.append(
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    )
+    
+    return transforms.Compose(transform_list)
+
+# === ASSINATURA ALTERADA PARA RECEBER AS CHAVES DO RUN.PY ===
+def load_data(data_dir, input_size, batch_size=24, aug_geom=False, aug_color=False, aug_occlus=False):
+    
     possible_paths = [
         data_dir,
         os.path.join(data_dir, "raw", "color"),
@@ -70,39 +114,15 @@ def load_data(data_dir, input_size, batch_size=24):
             target_dir = path
             break
 
-    if target_dir is None: raise FileNotFoundError(f"Não foi possível encontrar as pastas em '{data_dir}'.")
+    if target_dir is None: 
+        raise FileNotFoundError(f"Não foi possível encontrar as pastas em '{data_dir}'.")
 
     json_path = "/home/koliver/PlantVillage-Dataset/leaf_grouping/leaf-map.json"
     with open(json_path, 'r') as f:
         leaf_map = json.load(f)
 
-    # === PIPELINE COM EQUALIZAÇÃO DE HISTOGRAMA ===
-    transform = transforms.Compose([
-        # 1. Ajuste de tamanho base
-        transforms.Resize((256, 256)),
-        
-        # 2. Transformações Geométricas (Ângulos e Perspectivas)
-        transforms.RandomRotation(degrees=45),
-        transforms.RandomPerspective(distortion_scale=0.3, p=0.5),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomVerticalFlip(), # Folhas também podem estar de cabeça para baixo
-        
-        # 3. Transformações de Cor e Ruído
-        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.05),
-        transforms.RandomChoice([
-            transforms.GaussianBlur(kernel_size=(5, 9)),
-            transforms.Lambda(lambda img: ImageOps.equalize(img)) # Sua equalização anterior como uma chance aleatória!
-        ]),
-        
-        # 4. Cortes e Conversão
-        transforms.RandomCrop(input_size),
-        transforms.ToTensor(),
-        RandomBackgroundInject(p=0.7),
-        
-        # 5. Oclusão e Normalização (Operam direto no Tensor)
-        transforms.RandomErasing(p=0.5, scale=(0.02, 0.1)),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
+    # Cria as transformações dinamicamente
+    transform = get_transforms(input_size, aug_geom, aug_color, aug_occlus)
 
     dataset = FilteredImageFolder(root=target_dir, transform=transform)
     print(f"Classes carregadas para treino: {len(dataset.classes)}") 
